@@ -15,7 +15,8 @@ leptos_i18n_macro = { workspace = true }
 leptos = { workspace = true }
 leptos_meta = "0.6.14"
 leptos_router = "0.6.14"
-leptos-use = { version = "0.13", default-features = false, features = [
+# leptos-use = { version = "0.13", default-features = false, features = [
+leptos-use = { branch = "ssr_cookie_bugs", git = "https://github.com/jim-taylor-business/leptos-use.git", default-features = false, features = [
     "use_locales",
     "use_cookie",
 ] }
