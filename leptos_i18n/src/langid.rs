@@ -1,8 +1,8 @@
-//! A lot of the code in this module is shamefully taken from `fluent-template`, I would have used there crate directly if those implementations where public.
+//! A lot of the code in this module is shamefully taken from `fluent-template`, I would have used their crate directly if those implementations where public.
 //! see <https://github.com/XAMPPRocky/fluent-templates>
 //!
 //! I then specialized it for the use case of this crate.
-use icu::locid::{
+use icu_locid::{
     subtags::{Language, Variant},
     LanguageIdentifier,
 };
@@ -116,7 +116,7 @@ pub fn find_match<L: Locale>(requested: &[LanguageIdentifier], available: &[L]) 
 /// This function is taken from `fluent-langneg`.
 /// see <https://github.com/projectfluent/fluent-langneg-rs>
 ///
-/// Yes I could have imported the crate as this is public, but well we are already far into the strealing process anyway
+/// Yes I could have imported the crate as this is public, but well we are already far into the stealing process anyway
 pub fn convert_vec_str_to_langids_lossy<'a, I, J>(input: I) -> Vec<LanguageIdentifier>
 where
     I: IntoIterator<Item = J>,
@@ -146,7 +146,7 @@ mod test {
     use super::{filter_matches, find_match};
     use i18n::Locale;
 
-    use icu::locid::langid;
+    use icu_locid::langid;
 
     #[test]
     fn test_hirarchy() {

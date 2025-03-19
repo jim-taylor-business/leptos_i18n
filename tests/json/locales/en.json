@@ -32,6 +32,9 @@
       ["{{ count }}", "_"]
     ]
   },
+  "defaulted_subkeys": {
+    "subkey": "some string"
+  },
   "defaulted_string": "this string is declared in locale en",
   "defaulted_interpolation": "this interpolation is declared in locale {{ locale }}",
   "defaulted_ranges": [
@@ -52,6 +55,9 @@
   "time_formatting": "{{ time, time }}",
   "datetime_formatting": "{{ date, datetime }}",
   "number_formatting": "{{ num, number }}",
+  "number_formatting_grouping": "{{ num, number(grouping_strategy: never) }}",
+  "currency_formatting": "{{ num, currency(currency_code: EUR) }}",
+  "currency_formatting_width": "{{ num, currency(width: narrow; currency_code: USD) }}",
   "cardinal_plural_one": "one item",
   "cardinal_plural_other": "{{ count }} items",
   "ordinal_plural_ordinal_one": "{{ count }}st place",

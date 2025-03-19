@@ -27,7 +27,7 @@ Some of the formatters can take arguments to better suits the format you need:
 
 If an argument has a default value, not supplying that argument will make that arg take the default value.
 
-Here is all the formatters:
+Here are all the formatters:
 
 ## Number
 
@@ -38,8 +38,8 @@ Here is all the formatters:
 ```
 
 Will format the number based on the locale.
-This make the variable needed to be `impl leptos_i18n::formatting::NumberFormatterInputFn`, which is auto implemented for `impl Fn() -> T + Clone + 'static where T: leptos_i18n::formatting::IntoFixedDecimal`.
-`IntoFixedDecimal` is a trait to turn a value into a `fixed_decimal::FixedDecimal` which is a type used by `icu` to format numbers. That trait is currently implemented for:
+This makes the variable needed to be `impl leptos_i18n::formatting::NumberFormatterInputFn`, which is automatically implemented for `impl Fn() -> T + Clone + 'static where T: leptos_i18n::formatting::IntoFixedDecimal`.
+`IntoFixedDecimal` is a trait to turn a value into a `fixed_decimal::FixedDecimal`, which is a type used by `icu` to format numbers. That trait is currently implemented for:
 
 - FixedDecimal
 - usize
@@ -57,15 +57,24 @@ This make the variable needed to be `impl leptos_i18n::formatting::NumberFormatt
 - f32 \*
 - f64 \*
 
-> \* Is implemented for convenience, but uses [`FixedDecimal::try_from_f64`](https://docs.rs/fixed_decimal/latest/fixed_decimal/struct.FixedDecimal.html#method.try_from_f64) with the floating precision, you may want to use your own.
+> \* Is implemented for convenience, but uses [`FixedDecimal::try_from_f64`](https://docs.rs/fixed_decimal/latest/fixed_decimal/struct.FixedDecimal.html#method.try_from_f64) with the floating precision; you may want to use your own.
+
+The formatter itself doesn’t provide formatting options such as maximum significant digits, but those can be customized through `FixedDecimal` before being passed to the formatter.
+
+Enable the "format_nums" feature to use the number formatter.
 
 ### Arguments
 
-There are no arguments for this formatter at the moment.
+There is one argument at the moment for the number formatter: `grouping_strategy`, which is based on [`icu::decimal::options::GroupingStrategy`](https://docs.rs/icu_decimal/latest/icu_decimal/options/enum.GroupingStrategy.html), that can take 4 values:
+
+- auto (default)
+- never
+- always
+- min2
 
 ### Example
 
-```rust
+```rust,ignore
 use crate::i18n::*;
 
 let i18n = use_i18n();
@@ -73,6 +82,42 @@ let i18n = use_i18n();
 let num = move || 100_000;
 
 t!(i18n, number_formatter, num);
+```
+
+## Currency (experimental)
+
+```json
+{
+  "currency_formatter": "{{ num, currency }}"
+}
+```
+
+Will format the currency based on the locale.
+The variable should be the same as [number](#number).
+
+Enable the "format_currency" feature to use the number formatter.
+
+### Arguments
+
+There are two arguments at the moment for the currency formatter: `width` and `currency_code`, which are based on [`icu_experimental::dimension::currency::options::Width`](https://docs.rs/icu_experimental/0.1.0/icu_experimental/dimension/currency/options/enum.Width.html) and [`icu_experimental::dimension::currency::formatter::CurrencyCode`](https://docs.rs/icu_experimental/0.1.0/icu_experimental/dimension/currency/formatter/struct.CurrencyCode.html).
+
+`width` values:
+
+- short (default)
+- narrow
+
+`currency_code` value should be a [currency code](https://www.iban.com/currency-codes), such as USD or EUR. The USD is the default value.
+
+### Example
+
+```rust,ignore
+use crate::i18n::*;
+
+let i18n = use_i18n();
+
+let num = move || 100_000;
+
+t!(i18n, currency_formatter, num);
 ```
 
 ## Date
@@ -84,9 +129,11 @@ t!(i18n, number_formatter, num);
 ```
 
 Will format the date based on the locale.
-This make the variable needed to be `impl leptos_i18n::formatting::DateFormatterInputFn`, which is auto implemented for `impl Fn() -> T + Clone + 'static where T: leptos_i18n::formatting::IntoIcuDate`.
-`IntoIcuDate` is a trait to turn a value into a `impl icu::datetime::input::DateInput` which is a trait used by `icu` to format dates. The `IntoIcuDate` trait is currently implemented for `T: DateInput<Calendar = AnyCalendar>`.
+This makes the variable needed to be `impl leptos_i18n::formatting::DateFormatterInputFn`, which is automatically implemented for `impl Fn() -> T + Clone + 'static where T: leptos_i18n::formatting::IntoIcuDate`.
+`IntoIcuDate` is a trait to turn a value into a `impl icu::datetime::input::DateInput`, which is a trait used by `icu` to format dates. The `IntoIcuDate` trait is currently implemented for `T: DateInput<Calendar = AnyCalendar>`.
 You can use `icu::datetime::{Date, DateTime}`, or implement that trait for anything you want.
+
+Enable the "format_datetime" feature to use the date formatter.
 
 ### Arguments
 
@@ -105,7 +152,7 @@ There is one argument at the moment for the date formatter: `date_length`, which
 
 ### Example
 
-```rust
+```rust,ignore
 use crate::i18n::*;
 use leptos_i18n::reexports::icu::calendar::Date;
 
@@ -125,9 +172,11 @@ t!(i18n, date_formatter, date_var);
 ```
 
 Will format the time based on the locale.
-This make the variable needed to be `impl leptos_i18n::formatting::TimeFormatterInputFn`, which is auto implemented for `impl Fn() -> T + Clone + 'static where T: leptos_i18n::formatting::IntoIcuTime`.
-`IntoIcuTime` is a trait to turn a value into a `impl icu::datetime::input::TimeInput` which is a trait used by `icu` to format time. The `IntoIcuTime` trait is currently implemented for `T: IsoTimeInput`.
+This makes the variable needed to be `impl leptos_i18n::formatting::TimeFormatterInputFn`, which is automatically implemented for `impl Fn() -> T + Clone + 'static where T: leptos_i18n::formatting::IntoIcuTime`.
+`IntoIcuTime` is a trait to turn a value into a `impl icu::datetime::input::TimeInput`, which is a trait used by `icu` to format time. The `IntoIcuTime` trait is currently implemented for `T: IsoTimeInput`.
 You can use `icu::datetime::{Time, DateTime}`, or implement that trait for anything you want.
+
+Enable the "format_datetime" feature to use the time formatter.
 
 ### Arguments
 
@@ -146,7 +195,7 @@ There is one argument at the moment for the time formatter: `time_length`, which
 
 ### Example
 
-```rust
+```rust,ignore
 use crate::i18n::*;
 use leptos_i18n::reexports::icu::calendar::Date;
 
@@ -166,13 +215,15 @@ t!(i18n, time_formatter, time_var);
 ```
 
 Will format the datetime based on the locale.
-This make the variable needed to be `impl leptos_i18n::formatting::DateTimeFormatterInputFn`, which is auto implemented for `impl Fn() -> T + Clone + 'static where T: leptos_i18n::formatting::IntoIcuDateTime`.
+This makes the variable needed to be `impl leptos_i18n::formatting::DateTimeFormatterInputFn`, which is automatically implemented for `impl Fn() -> T + Clone + 'static where T: leptos_i18n::formatting::IntoIcuDateTime`.
 `IntoIcuDateTime` is a trait to turn a value into a `impl icu::datetime::input::DateTimeInput` which is a trait used by `icu` to format datetimes. The `IntoIcuDateTime` trait is currently implemented for `T: DateTimeInput<Calendar = AnyCalendar>`.
 You can use `icu::datetime::DateTime`, or implement that trait for anything you want.
 
+Enable the "format_datetime" feature to use the datetime formatter.
+
 ### Arguments
 
-There is two arguments at the moment for the datetime formatter: `date_length` and `time_length` that behave exactly the same at the one above.
+There are two arguments at the moment for the datetime formatter: `date_length` and `time_length` that behave exactly the same as the one above.
 
 ```json
 {
@@ -182,7 +233,7 @@ There is two arguments at the moment for the datetime formatter: `date_length` a
 
 ### Example
 
-```rust
+```rust,ignore
 use crate::i18n::*;
 use leptos_i18n::reexports::icu::calendar::DateTime;
 
@@ -206,12 +257,14 @@ t!(i18n, datetime_formatter, datetime_var);
 ```
 
 Will format the list based on the locale.
-This make the variable needed to be `impl leptos_i18n::formatting::ListFormatterInputFn`, which is auto implemented for `impl Fn() -> T + Clone + 'static where T: leptos_i18n::formatting::WriteableList`.
-`WriteableList` is a trait to turn a value into a `impl Iterator<Item = impl writeable::Writeable>`.
+This makes the variable needed to be `impl leptos_i18n::formatting::ListFormatterInputFn`, which is automatically implemented for `impl Fn() -> T + Clone + 'static where T: leptos_i18n::formatting::WriteableList`.
+`WriteableList` is a trait to turn a value into an `impl Iterator<Item = impl writeable::Writeable>`.
+
+Enable the "format_list" feature to use the list formatter.
 
 ### Arguments
 
-There is two arguments at the moment for the datetime formatter: `list_type` and `list_length`.
+There are two arguments at the moment for the list formatter: `list_type` and `list_length`.
 
 `list_type` takes 3 possible values:
 
@@ -225,17 +278,17 @@ There is two arguments at the moment for the datetime formatter: `list_type` and
 - short
 - narrow
 
-See [`Intl.ListFormat`](https://developer.mozilla.org/fr/docs/Web/JavaScript/Reference/Global_Objects/Intl/ListFormat) documentation. `icu` is used to do the formatting but I found the Mozilla doc to have more details.
+See [`Intl.ListFormat`](https://developer.mozilla.org/fr/docs/Web/JavaScript/Reference/Global_Objects/Intl/ListFormat) documentation. `icu` is used to do the formatting, but I found the Mozilla doc to have more details.
 
 ```json
 {
-  "short_and_list_formatter": "{{ list_var, list(list_length: ; time_length: full) }}"
+  "short_and_list_formatter": "{{ list_var, list(list_type: and; list_length: short) }}"
 }
 ```
 
 ### Example
 
-```rust
+```rust,ignore
 use crate::i18n::*;
 
 let i18n = use_i18n();
@@ -243,32 +296,4 @@ let i18n = use_i18n();
 let list_var = move || ["A", "B", "C"];
 
 t!(i18n, list_formatter, list_var);
-```
-
-# `t_format!`
-
-You may want to use the formatting capability without the need to create an entry in you translations, you can use the `t_format!` macro for that:
-
-```rust
-use crate::i18n::*;
-use leptos_i18n::formatting::t_format;
-
-let i18n = use_i18n();
-
-let num = move || 100_000;
-
-t_format!(i18n, num, formatter: number);
-```
-
-There are 9 variants, just like the `t!` macro, `td_format!`, `tu_format!`, `*_format_string` and `*_format_display`.
-
-### Example
-
-```rust
-let date = move || Date::try_new_iso_date(1970, 1, 2).unwrap().to_any();
-
-let en = td_format_string!(Locale::en, date, formatter: date);
-assert_eq!(en, "Jan 2, 1970");
-let fr = td_format_string!(Locale::fr, date, formatter: date(date_length: full));
-assert_eq!(fr, "vendredi 2 janvier 1970");
 ```

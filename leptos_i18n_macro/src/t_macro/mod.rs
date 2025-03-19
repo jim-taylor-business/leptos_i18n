@@ -53,6 +53,14 @@ pub fn t_macro_inner(
             let (#(#keys,)*) = (#(#values,)*);
         };
 
+        let get_key = if matches!(output_type, OutputType::String | OutputType::Display) {
+            quote! {
+                leptos_i18n::__private::InterpolationStringBuilder::check(#get_key)
+            }
+        } else {
+            get_key
+        };
+
         let inner = quote! {
             {
                 let _builder = #get_key.#builder_fn();
@@ -68,10 +76,9 @@ pub fn t_macro_inner(
     } else {
         let inner = quote! {
             {
-                #[allow(unused)]
-                use leptos_i18n::__private::BuildLit;
-                let _key = #get_key;
-                _key.#builder_fn().#build_fn()
+                let _builder = #get_key.#builder_fn();
+                #[deny(deprecated)]
+                _builder.#build_fn()
             }
         };
         (inner, None)
@@ -83,7 +90,7 @@ pub fn t_macro_inner(
 impl OutputType {
     pub fn build_fns(self) -> (TokenStream, TokenStream) {
         match self {
-            OutputType::View => (quote!(builder), quote!(build)),
+            OutputType::View => (quote!(builder), quote!(build().into_view)),
             OutputType::String => (quote!(display_builder), quote!(build_string)),
             OutputType::Display => (quote!(display_builder), quote!(build_display)),
         }
@@ -108,12 +115,24 @@ impl OutputType {
         match self {
             OutputType::View => {
                 let clone_values = interpolations.map(Self::clone_values);
-                quote! {
-                    {
-                        #params
-                        move || {
-                            #clone_values
-                            #ts
+                if cfg!(all(feature = "dynamic_load", not(feature = "ssr"))) {
+                    quote! {
+                        {
+                            #params
+                            leptos_i18n::__private::future_renderer(move || {
+                                #clone_values
+                                #ts
+                            })
+                        }
+                    }
+                } else {
+                    quote! {
+                        {
+                            #params
+                            move || {
+                                #clone_values
+                                #ts
+                            }
                         }
                     }
                 }
@@ -131,11 +150,11 @@ impl OutputType {
 impl InputType {
     pub fn get_key<T: ToTokens>(self, input: T, keys: Keys) -> TokenStream {
         match self {
-            InputType::Context => quote!(leptos_i18n::I18nContext::get_keys(#input).#keys),
+            InputType::Context => quote!(leptos_i18n::I18nContext::get_keys(#input).#keys()),
             InputType::Untracked => {
-                quote!(leptos_i18n::I18nContext::get_keys_untracked(#input).#keys)
+                quote!(leptos_i18n::I18nContext::get_keys_untracked(#input).#keys())
             }
-            InputType::Locale => quote!(leptos_i18n::Locale::get_keys(#input).#keys),
+            InputType::Locale => quote!(leptos_i18n::Locale::get_keys(#input).#keys()),
         }
     }
 }

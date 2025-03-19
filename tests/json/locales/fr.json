@@ -28,6 +28,7 @@
     "subkey_2": "<b>subkey_2</b>",
     "subkey_3": [["0", 0], ["{{ count }}"]]
   },
+  "defaulted_subkeys": null,
   "defaulted_string": null,
   "defaulted_interpolation": null,
   "defaulted_ranges": null,
@@ -45,6 +46,9 @@
   "time_formatting": "{{ time, time }}",
   "datetime_formatting": "{{ date, datetime }}",
   "number_formatting": "{{ num, number }}",
+  "number_formatting_grouping": "{{ num, number(grouping_strategy: never) }}",
+  "currency_formatting": "{{ num, currency(currency_code: USD) }}",
+  "currency_formatting_width": "{{ num, currency(width: narrow; currency_code: EUR) }}",
   "cardinal_plural": "{{ count }}",
   "ordinal_plural_ordinal_one": "{{ count }}re place",
   "ordinal_plural_ordinal_other": "{{ count }}e place",

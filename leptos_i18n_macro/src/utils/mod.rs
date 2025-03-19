@@ -1,8 +1,9 @@
-use quote::{quote, TokenStreamExt};
+use proc_macro2::TokenStream;
+use quote::{format_ident, quote, ToTokens, TokenStreamExt};
 use syn::Token;
 
 pub mod formatter;
-pub mod key;
+// pub mod key;
 pub mod scoped;
 
 pub enum Keys {
@@ -42,7 +43,71 @@ impl quote::ToTokens for Keys {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         match self {
             Keys::SingleKey(key) => tokens.append(key.clone()),
-            Keys::Subkeys(keys) => tokens.append_separated(keys, quote!(.)),
+            Keys::Subkeys(keys) => tokens.append_separated(keys, quote!(().)),
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum EitherOfWrapper {
+    Single,
+    Duo,
+    Multiple(syn::Ident),
+    Nested(Box<Self>),
+}
+
+impl EitherOfWrapper {
+    pub fn new(size: usize) -> EitherOfWrapper {
+        match size {
+            0 => {
+                unreachable!("0 locales ? how is this possible ? should have been checked by now.")
+            }
+            1 => EitherOfWrapper::Single,
+            2 => EitherOfWrapper::Duo,
+            3..=16 => EitherOfWrapper::Multiple(format_ident!("EitherOf{}", size)),
+            17.. => EitherOfWrapper::Nested(Box::new(Self::new(size - 15))),
+        }
+    }
+
+    pub fn wrap<T: ToTokens>(&self, i: usize, ts: T) -> TokenStream {
+        const LETTERS: [char; 16] = [
+            'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+        ];
+        match self {
+            EitherOfWrapper::Single => ts.into_token_stream(),
+            EitherOfWrapper::Duo if i == 0 => {
+                quote!(l_i18n_crate::reexports::leptos::either::Either::Left(#ts))
+            }
+            EitherOfWrapper::Duo => {
+                quote!(l_i18n_crate::reexports::leptos::either::Either::Right(#ts))
+            }
+            EitherOfWrapper::Multiple(ident) => {
+                let variant = format_ident!("{}", LETTERS[i]);
+                quote!(l_i18n_crate::reexports::leptos::either::#ident::#variant(#ts))
+            }
+            EitherOfWrapper::Nested(last) => match i {
+                0..=14 => {
+                    let variant = format_ident!("{}", LETTERS[i]);
+                    quote!(l_i18n_crate::reexports::leptos::either::EitherOf16::#variant(#ts))
+                }
+                15.. => {
+                    let variant = format_ident!("{}", LETTERS[15]);
+                    let ts = last.wrap(i - 15, ts);
+                    quote!(l_i18n_crate::reexports::leptos::either::EitherOf16::#variant(#ts))
+                }
+            },
+        }
+    }
+}
+
+pub fn fit_in_leptos_tuple(values: &[TokenStream]) -> TokenStream {
+    const TUPLE_MAX_SIZE: usize = 26;
+    let values_len = values.len();
+    if values_len <= TUPLE_MAX_SIZE {
+        quote!((#(#values,)*))
+    } else {
+        let chunk_size = values_len.div_ceil(TUPLE_MAX_SIZE);
+        let values = values.chunks(chunk_size).map(fit_in_leptos_tuple);
+        quote!((#(#values,)*))
     }
 }

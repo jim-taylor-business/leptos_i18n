@@ -52,10 +52,27 @@
 //!
 //! ### Rust code:
 //!
-//! ```rust,ignore
+//! ```rust
+//! #   leptos_i18n::declare_locales! {
+//! #       path: leptos_i18n,
+//! #       default: "en",
+//! #       locales: ["en", "fr"],
+//! #       en: {
+//! #           click_to_change_lang: "Click to change language",
+//! #           click_count: "You clicked {{ count }} times",
+//! #           click_to_inc: "Click to increment the counter"
+//! #       },
+//! #       fr: {
+//! #           click_to_change_lang: "Cliquez pour changez de langue",
+//! #           click_count: "Vous avez cliqué {{ count }} fois",
+//! #           click_to_inc: "Cliquez pour incrémenter le compteur"
+//! #       },
+//! #   };
+//! # /*
 //! leptos_i18n::load_locales!();
+//! # */
 //! use i18n::*; // `i18n` module created by the macro above
-//! use leptos::*;
+//! use leptos::prelude::*;
 //!
 //! #[component]
 //! pub fn App() -> impl IntoView {
@@ -90,7 +107,7 @@
 //! fn Counter() -> impl IntoView {
 //!     let i18n = use_i18n();
 //!
-//!     let (counter, set_counter) = create_signal( 0);
+//!     let (counter, set_counter) = signal( 0);
 //!
 //!     let inc = move |_| set_counter.update(|count| *count += 1);
 //!
@@ -108,53 +125,90 @@
 //! ```
 
 pub mod context;
+pub mod display;
 mod fetch_locale;
+mod fetch_translations;
 mod langid;
+pub mod locale;
 mod locale_traits;
 mod macro_helpers;
-mod routing;
+mod macros;
 mod scopes;
-mod static_lock;
-
-pub mod display;
 
 pub use macro_helpers::formatting;
 
-pub use locale_traits::{Locale, LocaleKeys};
+pub use locale_traits::{Direction, Locale, LocaleKeys};
 
 pub use context::{use_i18n_context, I18nContext};
 
 #[allow(deprecated)]
 pub use context::provide_i18n_context;
 
-pub use leptos_i18n_macro::{
-    load_locales, scope_i18n, scope_locale, t, t_display, t_string, td, td_display, td_string, tu,
-    tu_display, tu_string, use_i18n_scoped,
-};
+pub use leptos_i18n_macro::IcuDataProvider;
 pub use scopes::{ConstScope, Scope};
+
+/// This module contain utilities for plurals.
+#[cfg(feature = "plurals")]
+pub mod plurals {
+    pub use leptos_i18n_macro::{
+        t_plural, t_plural_ordinal, td_plural, td_plural_ordinal, tu_plural, tu_plural_ordinal,
+    };
+}
 
 #[doc(hidden)]
 pub mod __private {
+    pub use crate::locale_traits::TranslationUnitId;
+    pub mod fetch_translations {
+        pub use crate::fetch_translations::*;
+    }
+    #[cfg(feature = "plurals")]
     pub use crate::formatting::get_plural_rules;
     pub use crate::macro_helpers::*;
-    pub use crate::routing::i18n_routing;
-    pub use crate::static_lock::*;
-    pub use icu::locid;
-    pub use leptos_i18n_macro::declare_locales;
+    pub use leptos_i18n_macro as macros_reexport;
+}
 
-    #[leptos::component]
-    #[allow(non_snake_case)]
-    pub fn IslandWrapper(children: leptos::Children) -> impl leptos::IntoView {
-        children()
-    }
+/// This module contain utilities to create custom ICU providers.
+pub mod custom_provider {
+    pub use crate::macro_helpers::formatting::{
+        data_provider::IcuDataProvider, inner::set_icu_data_provider,
+    };
+    pub use leptos_i18n_macro::IcuDataProvider;
 }
 
 /// Reexports of backend libraries, mostly about formatting.
 pub mod reexports {
+    #[cfg(feature = "format_nums")]
     pub use fixed_decimal;
-    pub use icu;
+    #[cfg(feature = "format_currency")]
+    pub use tinystr::tinystr;
+
+    /// module containing reexports of crates from the icu project
+    pub mod icu {
+        #[cfg(feature = "format_datetime")]
+        pub use icu_calendar as calendar;
+        #[cfg(feature = "format_datetime")]
+        pub use icu_datetime as datetime;
+        #[cfg(feature = "format_nums")]
+        pub use icu_decimal as decimal;
+        #[cfg(feature = "format_currency")]
+        pub use icu_experimental::dimension::currency;
+        #[cfg(feature = "format_list")]
+        pub use icu_list as list;
+        #[cfg(feature = "plurals")]
+        pub use icu_plurals as plurals;
+
+        #[cfg(any(
+            feature = "format_nums",
+            feature = "format_datetime",
+            feature = "format_list",
+            feature = "format_currency",
+            feature = "plurals"
+        ))]
+        pub use icu_provider as provider;
+
+        pub use icu_locid as locid;
+    }
     pub use leptos;
-    pub use leptos_router;
     pub use serde;
     pub use typed_builder;
     pub use wasm_bindgen;
@@ -200,7 +254,7 @@ pub mod reexports {
 /// Also note that this macro does NOT take the context as the first argument, instead it takes the name for the generated island.
 ///
 /// If you need to pass variable args, you will have to make yourself an island that take those args.
-#[cfg(feature = "experimental-islands")]
+#[cfg(feature = "islands")]
 #[macro_export]
 macro_rules! ti {
     ($island_name: ident, $($tt:tt)*) => {
@@ -262,18 +316,13 @@ macro_rules! ti {
 ///     }
 /// }
 /// ```
-#[cfg(feature = "experimental-islands")]
+#[cfg(feature = "islands")]
 #[macro_export]
 macro_rules! make_i18n_island {
     ($island_name: ident, $($tt:tt)*) => {
         #[island]
         pub fn $island_name() -> impl IntoView {
-            use $crate::__private::IslandWrapper;
-            view! {
-                <IslandWrapper>
-                    {t!(use_i18n(), $($tt)*)}
-                </IslandWrapper>
-            }
+            t!(use_i18n(), $($tt)*)
         }
     };
 }

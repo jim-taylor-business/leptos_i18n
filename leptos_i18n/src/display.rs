@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use leptos::Attribute;
+// use leptos::Attribute;
 
 /// This trait is used when interpolating component with the `td_string!` macro
 pub trait DisplayComponent {
@@ -24,7 +24,7 @@ where
     }
 }
 
-impl<'a> DisplayComponent for &'a str {
+impl DisplayComponent for &str {
     fn fmt<T>(&self, f: &mut fmt::Formatter<'_>, children: T) -> fmt::Result
     where
         T: Fn(&mut fmt::Formatter<'_>) -> fmt::Result,
@@ -45,23 +45,35 @@ impl DisplayComponent for String {
     }
 }
 
-/// This struct is made to be used with the `td_string!` macro when interpolating a component
+/// This struct is made to be used with the `t_string!` macro when interpolating a component
 ///
-/// ```rust,ignore
-/// /* key = "highlight <b>me</b>" */
-/// let t = td_string!(locale, key, <b> = DisplayComp("div"));
-/// assert_eq!(t.to_string(), "highlight <div>me</div>");
+#[cfg_attr(feature = "dynamic_load", doc = "```rust, ignore")]
+#[cfg_attr(not(feature = "dynamic_load"), doc = "```rust")]
+/// #   leptos_i18n::declare_locales! {
+/// #       path: leptos_i18n,
+/// #       interpolate_display,
+/// #       default: "en",
+/// #       locales: ["en"],
+/// #       en: {
+/// #           key: "highlight <b>me</b>",
+/// #       },
+/// #   };
+/// # use i18n::*;
+/// use leptos_i18n::display::DisplayComp;
+/// // key = "highlight <b>me</b>"
+/// let t = td_string!(Locale::en, key, <b> = DisplayComp::new("div", &[("id", "my_div")]));
+/// assert_eq!(t.to_string(), "highlight <div id=\"my_div\">me</div>");
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct DisplayComp<'a> {
     comp_name: &'a str,
-    attrs: &'a [(&'static str, Attribute)],
+    attrs: &'a [(&'a str, &'a str)],
 }
 
 impl<'a> DisplayComp<'a> {
     #[inline]
     /// Create a new `DisplayComp`
-    pub fn new(comp_name: &'a str, attrs: &'a [(&'static str, Attribute)]) -> Self {
+    pub fn new(comp_name: &'a str, attrs: &'a [(&'a str, &'a str)]) -> Self {
         Self { comp_name, attrs }
     }
 }
@@ -73,8 +85,7 @@ impl DisplayComponent for DisplayComp<'_> {
     {
         write!(f, "<{}", self.comp_name)?;
         for (attr_name, attr) in self.attrs {
-            let value = attr.as_value_string(attr_name);
-            write!(f, " {}", value)?;
+            write!(f, " {}=\"{}\"", attr_name, attr)?;
         }
         f.write_str(">")?;
         children(f)?;

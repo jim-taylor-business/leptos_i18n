@@ -1,16 +1,16 @@
 # The `td!` Macro
 
-The `td!` macro works just like the `t!` macro but instead of taking the context as it first argument, it takes the desired locale:
+The `td!` macro works just like the `t!` macro but instead of taking the context as its first argument, it takes the desired locale:
 
-```rust
+```rust,ignore
 td!(Locale::fr, hello_world)
 ```
 
-This is useful if for example you want the buttons to switch locale to always be in the language they switch to:
+This is useful if, for example, you want the buttons to switch locale to always be in the language they switch to:
 
-```rust
+```rust,ignore
 use crate::i18n::*;
-use leptos::*;
+use leptos::prelude::*;
 
 #[component]
 pub fn Foo() -> impl IntoView {
@@ -18,23 +18,23 @@ pub fn Foo() -> impl IntoView {
 
     view! {
         <For
-            each = || [Locale::en, Locale::fr]
-            key = |locale| *locale
-            view = move |locale| view! {
-                <button on:click = move|_| i18n.set_locale(locale)>
-                    {td!(locale, set_locale)}
-                </button>
-            }
-        />
+            each = Locale::get_all
+            key = |locale| **locale
+            let:locale
+        >
+            <button on:click = move|_| i18n.set_locale(*locale)>
+                {td!(*locale, set_locale)}
+            </button>
+        </For>
     }
 }
 ```
 
-This could just be written has
+This could just be written as
 
-```rust
+```rust,ignore
 use crate::i18n::*;
-use leptos::*;
+use leptos::prelude::*;
 
 #[component]
 pub fn Foo() -> impl IntoView {
@@ -51,4 +51,4 @@ pub fn Foo() -> impl IntoView {
 }
 ```
 
-But the above scale better.
+But the above scale is better.

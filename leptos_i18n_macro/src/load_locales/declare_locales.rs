@@ -1,14 +1,17 @@
-use std::{collections::HashMap, fmt::Display, rc::Rc};
+use std::{collections::BTreeMap, fmt::Display};
 
-use crate::load_locales::ranges::{RangeParseBuffer, Ranges, UntypedRangesInner};
-use crate::utils::key::{Key, KeyPath, CACHED_VAR_COUNT_KEY};
-
-use super::{
-    cfg_file::ConfigFile,
-    load_locales_inner,
-    locale::{Locale, LocalesOrNamespaces},
-    parsed_value::ParsedValue,
-    ranges::{Range, RangeNumber, RangesInner, TypeOrRange},
+use leptos_i18n_parser::{
+    parse_locales::{
+        cfg_file::ConfigFile,
+        locale::{Locale, LocalesOrNamespaces},
+        parsed_value::ParsedValue,
+        ranges::{
+            ParseRanges, Range, RangeNumber, Ranges, RangesInner, TypeOrRange, UntypedRangesInner,
+        },
+        warning::Warnings,
+        ForeignKeysPaths,
+    },
+    utils::{Key, KeyPath},
 };
 use proc_macro2::Span;
 use quote::ToTokens;
@@ -20,13 +23,28 @@ use syn::{
 pub fn declare_locales(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let ParsedInput {
         cfg_file,
-        mut locales,
+        locales,
         crate_path,
+        foreign_keys_paths,
+        interpolate_display,
     } = parse_macro_input!(tokens as ParsedInput);
-    let result = load_locales_inner(&crate_path, &cfg_file, &mut locales);
+    let warnings = Warnings::new();
+
+    let result = super::load_locales_inner(
+        &crate_path,
+        &cfg_file,
+        locales,
+        foreign_keys_paths,
+        warnings,
+        None,
+        interpolate_display,
+    );
     match result {
         Ok(ts) => ts.into(),
-        Err(err) => err.into(),
+        Err(err) => {
+            let err = err.to_string();
+            quote::quote!(compile_error!(#err);).into()
+        }
     }
 }
 
@@ -34,16 +52,18 @@ pub struct ParsedInput {
     crate_path: syn::Path,
     cfg_file: ConfigFile,
     locales: LocalesOrNamespaces,
+    foreign_keys_paths: ForeignKeysPaths,
+    interpolate_display: bool,
 }
 
 fn emit_err<A, T: ToTokens, U: Display>(tokens: T, message: U) -> syn::Result<A> {
     Err(syn::Error::new_spanned(tokens, message))
 }
 
-fn make_key(lit_str: LitStr) -> syn::Result<Rc<Key>> {
+fn make_key(lit_str: LitStr) -> syn::Result<Key> {
     let value = lit_str.value();
     if let Some(k) = Key::new(&value) {
-        Ok(Rc::new(k))
+        Ok(k)
     } else {
         Err(syn::Error::new_spanned(lit_str, "invalid key"))
     }
@@ -60,23 +80,25 @@ fn parse_array<T: syn::parse::Parse>(
 fn parse_str_value(
     input: syn::parse::ParseStream,
     key_path: &mut KeyPath,
-    locale: &Rc<Key>,
+    locale: &Key,
+    foreign_keys_paths: &ForeignKeysPaths,
 ) -> syn::Result<Option<ParsedValue>> {
     if !input.peek(LitStr) {
         return Ok(None);
     }
     let lit_str = input.parse::<LitStr>()?;
     let value = lit_str.value();
-    ParsedValue::new(&value, key_path, locale)
+    ParsedValue::new(&value, key_path, locale, foreign_keys_paths)
         .map(Some)
         .map_err(|_| syn::Error::new_spanned(lit_str, "unknown formatter."))
 }
 
 fn parse_map_values(
     input: syn::parse::ParseStream,
-    name: &Rc<Key>,
+    name: &Key,
     key_path: &mut KeyPath,
-    locale: &Rc<Key>,
+    locale: &Key,
+    foreign_keys_paths: &ForeignKeysPaths,
 ) -> syn::Result<Option<ParsedValue>> {
     fn inner(input: syn::parse::ParseStream) -> syn::Result<ParseBuffer> {
         let content;
@@ -87,18 +109,21 @@ fn parse_map_values(
         return Ok(None);
     };
 
-    let keys = parse_block_inner(content, key_path, locale)?;
+    let keys = parse_block_inner(content, key_path, locale, foreign_keys_paths)?;
 
     Ok(Some(ParsedValue::Subkeys(Some(Locale {
         top_locale_name: locale.clone(),
         name: name.clone(),
         keys,
+        strings: vec![],
+        top_locale_string_count: 0,
     }))))
 }
 
 pub struct ParseRangeSeed<'a> {
     pub key_path: &'a mut KeyPath,
-    pub locale: &'a Rc<Key>,
+    pub locale: &'a Key,
+    pub foreign_keys_paths: &'a ForeignKeysPaths,
 }
 
 fn parse_range_count<T: RangeNumber>(input: &ParseBuffer) -> syn::Result<Range<T>> {
@@ -133,11 +158,14 @@ fn parse_range_count<T: RangeNumber>(input: &ParseBuffer) -> syn::Result<Range<T
 fn parse_range_pair<T: RangeNumber>(
     input: &ParseBuffer,
     seed: &mut ParseRangeSeed,
+    foreign_keys_paths: &ForeignKeysPaths,
 ) -> syn::Result<(Range<T>, ParsedValue)> {
     let content;
     syn::bracketed!(content in input);
 
-    let Some(parsed_value) = parse_str_value(&content, seed.key_path, seed.locale)? else {
+    let Some(parsed_value) =
+        parse_str_value(&content, seed.key_path, seed.locale, foreign_keys_paths)?
+    else {
         return Err(content.error("only strings are accepted here."));
     };
 
@@ -165,8 +193,9 @@ pub fn parse_range_pairs<T: RangeNumber>(
     ranges: &mut RangesInner<T>,
     mut seed: ParseRangeSeed,
 ) -> syn::Result<()> {
+    let foreign_keys_paths = seed.foreign_keys_paths;
     while !content.is_empty() {
-        let pair = parse_range_pair(content, &mut seed)?;
+        let pair = parse_range_pair(content, &mut seed, foreign_keys_paths)?;
         ranges.push(pair);
         if !content.is_empty() {
             content.parse::<Comma>()?;
@@ -175,15 +204,19 @@ pub fn parse_range_pairs<T: RangeNumber>(
     Ok(())
 }
 
-fn parse_range_type(content: &ParseBuffer, seed: &mut ParseRangeSeed) -> syn::Result<TypeOrRange> {
+fn parse_range_type(
+    content: &ParseBuffer,
+    seed: &mut ParseRangeSeed,
+    foreign_keys_paths: &ForeignKeysPaths,
+) -> syn::Result<TypeOrRange> {
     if content.peek(LitStr) {
         let lit_str = content.parse::<LitStr>()?;
         let s = lit_str.value();
-        return TypeOrRange::from_str(&s)
+        return TypeOrRange::from_string(&s)
             .ok_or_else(|| syn::Error::new_spanned(lit_str, "invalid range type."));
     }
 
-    let range = parse_range_pair(content, seed)?;
+    let range = parse_range_pair(content, seed, foreign_keys_paths)?;
 
     Ok(TypeOrRange::Range(range))
 }
@@ -191,6 +224,7 @@ fn parse_range_type(content: &ParseBuffer, seed: &mut ParseRangeSeed) -> syn::Re
 fn parse_ranges(
     input: syn::parse::ParseStream,
     mut seed: ParseRangeSeed,
+    foreign_keys_paths: &ForeignKeysPaths,
 ) -> syn::Result<Option<ParsedValue>> {
     fn inner(input: syn::parse::ParseStream) -> syn::Result<ParseBuffer> {
         let content;
@@ -201,11 +235,11 @@ fn parse_ranges(
         return Ok(None);
     };
 
-    let mut ranges = match parse_range_type(&content, &mut seed)? {
+    let mut ranges = match parse_range_type(&content, &mut seed, foreign_keys_paths)? {
         TypeOrRange::Type(range_type) => Ranges::from_type(range_type),
         TypeOrRange::Range(range) => Ranges {
             inner: UntypedRangesInner::I32(vec![range]),
-            count_key: CACHED_VAR_COUNT_KEY.with(Clone::clone),
+            count_key: Key::count(),
         },
     };
 
@@ -217,24 +251,30 @@ fn parse_ranges(
 fn parse_values(
     input: syn::parse::ParseStream,
     key_path: &mut KeyPath,
-    locale: &Rc<Key>,
-) -> syn::Result<(Rc<Key>, ParsedValue)> {
+    locale: &Key,
+    foreign_keys_paths: &ForeignKeysPaths,
+) -> syn::Result<(Key, ParsedValue)> {
     let ident: Ident = input.parse()?;
-    let key = Rc::new(Key::from_ident(ident));
+    let key = Key::from_ident(ident);
     key_path.push_key(key.clone());
     input.parse::<Token![:]>()?;
-    if let Some(parsed_value) = parse_str_value(input, key_path, locale)? {
+    if let Some(parsed_value) = parse_str_value(input, key_path, locale, foreign_keys_paths)? {
         key_path.pop_key();
         return Ok((key, parsed_value));
     }
-    if let Some(parsed_value) = parse_map_values(input, &key, key_path, locale)? {
+    if let Some(parsed_value) = parse_map_values(input, &key, key_path, locale, foreign_keys_paths)?
+    {
         key_path.pop_key();
         return Ok((key, parsed_value));
     }
 
-    let seed = ParseRangeSeed { key_path, locale };
+    let seed = ParseRangeSeed {
+        key_path,
+        locale,
+        foreign_keys_paths,
+    };
 
-    if let Some(parsed_value) = parse_ranges(input, seed)? {
+    if let Some(parsed_value) = parse_ranges(input, seed, foreign_keys_paths)? {
         key_path.pop_key();
         return Ok((key, parsed_value));
     }
@@ -245,11 +285,12 @@ fn parse_values(
 fn parse_block_inner(
     content: ParseBuffer,
     key_path: &mut KeyPath,
-    locale: &Rc<Key>,
-) -> syn::Result<HashMap<Rc<Key>, ParsedValue>> {
-    let mut values = HashMap::new();
+    locale: &Key,
+    foreign_keys_paths: &ForeignKeysPaths,
+) -> syn::Result<BTreeMap<Key, ParsedValue>> {
+    let mut values = BTreeMap::new();
     while !content.is_empty() {
-        let (key, value) = parse_values(&content, key_path, locale)?;
+        let (key, value) = parse_values(&content, key_path, locale, foreign_keys_paths)?;
         values.insert(key, value);
         if !content.is_empty() {
             content.parse::<Comma>()?;
@@ -261,16 +302,21 @@ fn parse_block_inner(
 fn parse_block(
     input: syn::parse::ParseStream,
     key_path: &mut KeyPath,
-    locale: &Rc<Key>,
-) -> syn::Result<HashMap<Rc<Key>, ParsedValue>> {
+    locale: &Key,
+    foreign_keys_paths: &ForeignKeysPaths,
+) -> syn::Result<BTreeMap<Key, ParsedValue>> {
     let content;
     syn::braced!(content in input);
-    parse_block_inner(content, key_path, locale)
+    parse_block_inner(content, key_path, locale, foreign_keys_paths)
 }
 
-fn parse_locale(input: syn::parse::ParseStream, locale_key: Rc<Key>) -> syn::Result<Locale> {
+fn parse_locale(
+    input: syn::parse::ParseStream,
+    locale_key: Key,
+    foreign_keys_paths: &ForeignKeysPaths,
+) -> syn::Result<Locale> {
     let loc_name_ident: Ident = input.parse()?;
-    if loc_name_ident != locale_key.ident {
+    if loc_name_ident != *locale_key.ident {
         return emit_err(loc_name_ident, "unknown locale.");
     }
 
@@ -278,7 +324,7 @@ fn parse_locale(input: syn::parse::ParseStream, locale_key: Rc<Key>) -> syn::Res
 
     let mut key_path = KeyPath::new(None);
 
-    let keys = parse_block(input, &mut key_path, &locale_key)?;
+    let keys = parse_block(input, &mut key_path, &locale_key, foreign_keys_paths)?;
 
     if !input.is_empty() {
         input.parse::<Comma>()?;
@@ -288,6 +334,8 @@ fn parse_locale(input: syn::parse::ParseStream, locale_key: Rc<Key>) -> syn::Res
         top_locale_name: locale_key.clone(),
         name: locale_key,
         keys,
+        strings: vec![],
+        top_locale_string_count: 0,
     })
 }
 
@@ -302,12 +350,20 @@ impl syn::parse::Parse for ParsedInput {
         } else {
             None
         };
-
-        // default: "defaultloc",
-        let def_ident: Ident = if crate_path.is_none() {
+        let ident: Ident = if crate_path.is_none() {
             ident
         } else {
             input.parse()?
+        };
+
+        let interpolate_display = ident == "interpolate_display";
+
+        // default: "defaultloc",
+        let def_ident: Ident = if interpolate_display {
+            input.parse::<Token![,]>()?;
+            input.parse()?
+        } else {
+            ident
         };
         if def_ident != "default" {
             return emit_err(def_ident, "not default");
@@ -327,7 +383,7 @@ impl syn::parse::Parse for ParsedInput {
         let mut locales_iter = parse_array::<LitStr>(input)?.into_iter();
         match locales_iter.next() {
             None => return emit_err(loc_ident, "missing locales."),
-            Some(l) if Key::new(&l.value()).as_ref() != Some(&*default) => {
+            Some(l) if Key::new(&l.value()).as_ref() != Some(&default) => {
                 return emit_err(l, "first locale should be the same as the default.")
             }
             _ => {}
@@ -339,10 +395,12 @@ impl syn::parse::Parse for ParsedInput {
 
         // loc: { .. }
 
+        let foreign_keys_paths = ForeignKeysPaths::new();
+
         let locales = locales_key
             .iter()
             .cloned()
-            .map(|k| parse_locale(input, k))
+            .map(|k| parse_locale(input, k, &foreign_keys_paths))
             .collect::<syn::Result<Vec<_>>>()?;
 
         if !input.is_empty() {
@@ -352,15 +410,40 @@ impl syn::parse::Parse for ParsedInput {
         let crate_path = crate_path
             .unwrap_or_else(|| syn::Path::from(syn::Ident::new("leptos_i18n", Span::call_site())));
 
+        let interpolate_display = interpolate_display || cfg!(feature = "interpolate_display");
+
         Ok(ParsedInput {
             cfg_file: ConfigFile {
                 default,
                 locales: locales_key,
                 name_spaces: None,
                 locales_dir: "".into(),
+                translations_uri: None,
+                extensions: Default::default(),
             },
             locales: LocalesOrNamespaces::Locales(locales),
             crate_path,
+            foreign_keys_paths,
+            interpolate_display,
         })
+    }
+}
+
+pub struct RangeParseBuffer<'de>(ParseBuffer<'de>);
+
+impl<'a, 'de> ParseRanges<'a, 'de> for RangeParseBuffer<'de> {
+    type Result<O>
+        = syn::Result<O>
+    where
+        O: 'de + 'a;
+
+    type Seed = super::declare_locales::ParseRangeSeed<'a>;
+
+    fn deserialize_all_pairs<T: RangeNumber>(
+        self,
+        ranges: &mut RangesInner<T>,
+        seed: Self::Seed,
+    ) -> Self::Result<()> {
+        parse_range_pairs(&self.0, ranges, seed)
     }
 }

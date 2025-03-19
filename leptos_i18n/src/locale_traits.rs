@@ -1,7 +1,9 @@
-use std::hash::Hash;
-use std::str::FromStr;
-
-use icu::locid;
+use icu_locid::{LanguageIdentifier, Locale as IcuLocale};
+use std::{
+    fmt::{Debug, Display},
+    hash::Hash,
+    str::FromStr,
+};
 
 use crate::langid::{convert_vec_str_to_langids_lossy, filter_matches, find_match};
 
@@ -14,8 +16,8 @@ pub trait Locale<L: Locale = Self>:
     + Clone
     + Copy
     + FromStr
-    + AsRef<locid::LanguageIdentifier>
-    + AsRef<locid::Locale>
+    + AsRef<LanguageIdentifier>
+    + AsRef<IcuLocale>
     + AsRef<str>
     + AsRef<L>
     + std::fmt::Display
@@ -31,14 +33,24 @@ pub trait Locale<L: Locale = Self>:
     /// The associated struct containing the translations
     type Keys: LocaleKeys<Locale = L>;
 
+    /// Associated `#[server]` function type to request the translations
+    #[cfg(all(feature = "dynamic_load", not(feature = "csr")))]
+    type ServerFn: leptos::server_fn::ServerFn;
+
+    /// Enum where each variants is an ID of a translation unit
+    type TranslationUnitId: TranslationUnitId;
+
     /// Return a static str that represent the locale.
     fn as_str(self) -> &'static str;
 
     /// Return a static reference to a icu `Locale`
-    fn as_icu_locale(self) -> &'static locid::Locale;
+    fn as_icu_locale(self) -> &'static IcuLocale;
+
+    /// Return the direction of the locale.
+    fn direction(self) -> Direction;
 
     /// Return a static reference to a `LanguageIdentifier`
-    fn as_langid(self) -> &'static locid::LanguageIdentifier {
+    fn as_langid(self) -> &'static LanguageIdentifier {
         Locale::as_icu_locale(self).as_ref()
     }
 
@@ -55,7 +67,7 @@ pub trait Locale<L: Locale = Self>:
     /// Given a langid, return a Vec of suitables `Locale` sorted in compatibility (first one being the best match).
     ///
     /// This function does not fallback to default if no match is found.
-    fn find_matchs<T: AsRef<locid::LanguageIdentifier>>(langid: T) -> Vec<Self> {
+    fn find_matchs<T: AsRef<LanguageIdentifier>>(langid: T) -> Vec<Self> {
         let matches: Vec<L> =
             filter_matches(std::slice::from_ref(langid.as_ref()), Self::get_all());
         matches.into_iter().map(Self::from_base_locale).collect()
@@ -63,7 +75,7 @@ pub trait Locale<L: Locale = Self>:
 
     /// Return the keys based on self
     #[inline]
-    fn get_keys(self) -> &'static Self::Keys {
+    fn get_keys(self) -> Self::Keys {
         LocaleKeys::from_locale(self.to_base_locale())
     }
 
@@ -77,6 +89,24 @@ pub trait Locale<L: Locale = Self>:
     fn map_locale(self, locale: L) -> Self {
         Self::from_base_locale(locale)
     }
+
+    /// Associated `#[server]` function to request the translations
+    #[cfg(feature = "dynamic_load")]
+    fn request_translations(
+        self,
+        translations_id: Self::TranslationUnitId,
+    ) -> impl std::future::Future<
+        Output = Result<
+            crate::fetch_translations::LocaleServerFnOutput,
+            leptos::prelude::ServerFnError,
+        >,
+    > + Send
+           + Sync
+           + 'static;
+
+    /// Init the translation unit of the given ID with the given values
+    #[cfg(all(feature = "dynamic_load", feature = "hydrate"))]
+    fn init_translations(self, translations_id: Self::TranslationUnitId, values: Vec<Box<str>>);
 }
 
 /// Trait implemented the struct representing the translation keys
@@ -87,7 +117,50 @@ pub trait LocaleKeys: 'static + Clone + Copy + Send + Sync {
     type Locale: Locale;
 
     /// Return a static ref to Self containing the translations for the given locale
-    fn from_locale(locale: Self::Locale) -> &'static Self;
+    fn from_locale(locale: Self::Locale) -> Self;
+}
+
+/// Trait for the type giving an ID to each section of the translations
+pub trait TranslationUnitId:
+    serde::Serialize + serde::de::DeserializeOwned + Copy + Debug + Send + Sync + Eq + Hash + 'static
+{
+    /// Return the string representation of that ID
+    fn to_str(self) -> Option<&'static str>;
+}
+
+impl TranslationUnitId for () {
+    fn to_str(self) -> Option<&'static str> {
+        None
+    }
+}
+
+/// Represents the direction of a script.
+/// This is computed at compile time with [`icu_locid_transform::LocaleDirectionality`](https://docs.rs/icu_locid_transform/1.5.0/icu_locid_transform/struct.LocaleDirectionality.html)
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub enum Direction {
+    /// The script is left-to-right.
+    LeftToRight,
+    /// The script is right-to-left.
+    RightToLeft,
+    /// `icu_locid_transform::LocaleDirectionality::get` return an Option, this variant represent the None case, it is unknown.
+    Auto,
+}
+
+impl Display for Direction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl Direction {
+    /// Return the string representation for the the html `dir` attribute: "ltr", "rtl" and "auto".
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Direction::LeftToRight => "ltr",
+            Direction::RightToLeft => "rtl",
+            Direction::Auto => "auto",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -108,8 +181,40 @@ mod test {
         },
     }
 
-    use crate::{self as leptos_i18n, scope_locale, Locale as _};
+    use crate::Locale as _;
     use i18n::Locale;
+
+    #[cfg(not(feature = "dynamic_load"))]
+    const _: () = {
+        macro_rules! td_const {
+            ($locale:expr, $first_key:ident $(.$key:ident)*) => {
+                ($locale).get_keys_const()
+                    .$first_key()
+                    $(.$key())*
+                    .inner()
+            };
+        }
+        const fn check_str_eq_const(a: &str, b: &str) -> bool {
+            if a.len() != b.len() {
+                return false;
+            }
+            let (mut a, mut b) = (a.as_bytes(), b.as_bytes());
+            loop {
+                match (a.split_first(), b.split_first()) {
+                    (Some((first_a, rest_a)), Some((first_b, rest_b))) if *first_a == *first_b => {
+                        a = rest_a;
+                        b = rest_b;
+                    }
+                    (None, None) => return true,
+                    _ => return false,
+                }
+            }
+        }
+        let fr_ssk = td_const!(Locale::fr, sk.ssk);
+        assert!(check_str_eq_const(fr_ssk, "test fr"));
+        let fr_ssk = td_const!(Locale::en, sk.ssk);
+        assert!(check_str_eq_const(fr_ssk, "test en"));
+    };
 
     #[test]
     fn test_find_locale() {
@@ -130,10 +235,12 @@ mod test {
     }
 
     #[test]
+    #[cfg(not(feature = "dynamic_load"))]
     fn test_scope() {
+        use crate::{self as leptos_i18n, __private::LitWrapper, scope_locale};
         let en_sk = scope_locale!(Locale::en, sk);
-        assert_eq!(en_sk.get_keys().ssk, "test en");
+        assert_eq!(en_sk.get_keys().ssk(), LitWrapper::new("test en"));
         let fr_sk = en_sk.map_locale(Locale::fr);
-        assert_eq!(fr_sk.get_keys().ssk, "test fr");
+        assert_eq!(fr_sk.get_keys().ssk(), LitWrapper::new("test fr"));
     }
 }

@@ -1,9 +1,7 @@
 use std::fmt::{self, Display};
 
-use icu::{
-    calendar::AnyCalendar,
-    datetime::{input::DateInput, options::length},
-};
+use icu_calendar::AnyCalendar;
+use icu_datetime::{input::DateInput, options::length};
 use leptos::IntoView;
 
 use crate::Locale;
@@ -45,7 +43,7 @@ impl<T: DateInput<Calendar = AnyCalendar>> IntoIcuDate for T {
 }
 
 /// Marker trait for types that produce a `T: DateInput<Calendar = AnyCalendar>`.
-pub trait DateFormatterInputFn: 'static + Clone {
+pub trait DateFormatterInputFn: 'static + Clone + Send + Sync {
     /// The returned `T: DateInput<Calendar = AnyCalendar>`.
     type Date: DateInput<Calendar = AnyCalendar>;
 
@@ -53,7 +51,7 @@ pub trait DateFormatterInputFn: 'static + Clone {
     fn to_icu_date(&self) -> Self::Date;
 }
 
-impl<T: IntoIcuDate, F: Fn() -> T + Clone + 'static> DateFormatterInputFn for F {
+impl<T: IntoIcuDate, F: Fn() -> T + Clone + Send + Sync + 'static> DateFormatterInputFn for F {
     type Date = T::Date;
 
     fn to_icu_date(&self) -> Self::Date {
@@ -66,7 +64,7 @@ pub fn format_date_to_view<L: Locale>(
     locale: L,
     date: impl DateFormatterInputFn,
     length: length::Date,
-) -> impl IntoView {
+) -> impl IntoView + Clone {
     let date_formatter = super::get_date_formatter(locale, length);
 
     move || {

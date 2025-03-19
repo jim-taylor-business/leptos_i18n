@@ -1,11 +1,13 @@
-use leptos::{create_memo, Memo, SignalGet, SignalWith};
+use leptos::prelude::*;
+use leptos_use::UseLocalesOptions;
 
 use crate::Locale;
 
-pub fn fetch_locale<L: Locale>(current_cookie: Option<L>) -> Memo<L> {
-    let accepted_locales = leptos_use::use_locales();
+pub fn fetch_locale<L: Locale>(current_cookie: Option<L>, options: UseLocalesOptions) -> Memo<L> {
+    let accepted_locales = leptos_use::use_locales_with_options(options);
     let accepted_locale =
-        create_memo(move |_| accepted_locales.with(|accepted| L::find_locale(accepted)));
+        Memo::new(move |_| accepted_locales.with(|accepted| L::find_locale(accepted)));
+
     if cfg!(feature = "ssr") {
         fetch_locale_ssr(current_cookie, accepted_locale)
     } else if cfg!(feature = "hydrate") {
@@ -15,8 +17,24 @@ pub fn fetch_locale<L: Locale>(current_cookie: Option<L>) -> Memo<L> {
     }
 }
 
-pub fn signal_once_then<T: Clone + PartialEq>(start: T, then: Memo<T>) -> Memo<T> {
-    create_memo(move |init| {
+pub fn get_accepted_locale<L: Locale>(options: UseLocalesOptions) -> L {
+    leptos_use::use_locales_with_options(options)
+        .with_untracked(|accepted| L::find_locale(accepted))
+}
+
+pub fn resolve_locale<L: Locale>(current_cookie: Option<L>, options: UseLocalesOptions) -> L {
+    cfg!(feature = "hydrate")
+        .then(get_locale_from_html)
+        .flatten()
+        .or(current_cookie)
+        .unwrap_or_else(move || get_accepted_locale(options))
+}
+
+pub fn signal_once_then<T: Clone + PartialEq + Send + Sync + 'static>(
+    start: T,
+    then: Memo<T>,
+) -> Memo<T> {
+    Memo::new(move |init| {
         let then = then.get();
         if init.is_none() {
             start.clone()
@@ -26,7 +44,10 @@ pub fn signal_once_then<T: Clone + PartialEq>(start: T, then: Memo<T>) -> Memo<T
     })
 }
 
-pub fn signal_maybe_once_then<T: Clone + PartialEq>(start: Option<T>, then: Memo<T>) -> Memo<T> {
+pub fn signal_maybe_once_then<T: Clone + PartialEq + Send + Sync + 'static>(
+    start: Option<T>,
+    then: Memo<T>,
+) -> Memo<T> {
     match start {
         Some(start) => signal_once_then(start, then),
         None => then,
@@ -38,9 +59,8 @@ fn fetch_locale_ssr<L: Locale>(current_cookie: Option<L>, accepted_locale: Memo<
     signal_maybe_once_then(current_cookie, accepted_locale)
 }
 
-// hydrate fetch
-fn fetch_locale_hydrate<L: Locale>(current_cookie: Option<L>, accepted_locale: Memo<L>) -> Memo<L> {
-    let base_locale = leptos::document()
+fn get_locale_from_html<L: Locale>() -> Option<L> {
+    leptos::prelude::document()
         .document_element()
         .and_then(|el| match el.get_attribute("lang") {
             None => {
@@ -50,7 +70,11 @@ fn fetch_locale_hydrate<L: Locale>(current_cookie: Option<L>, accepted_locale: M
             Some(lang) => Some(lang),
         })
         .and_then(|lang| L::from_str(&lang).ok())
-        .or(current_cookie);
+}
+
+// hydrate fetch
+fn fetch_locale_hydrate<L: Locale>(current_cookie: Option<L>, accepted_locale: Memo<L>) -> Memo<L> {
+    let base_locale = get_locale_from_html().or(current_cookie);
 
     signal_maybe_once_then(base_locale, accepted_locale)
 }

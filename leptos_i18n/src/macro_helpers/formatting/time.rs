@@ -1,6 +1,6 @@
 use std::fmt::{self, Display};
 
-use icu::datetime::{input::IsoTimeInput, options::length};
+use icu_datetime::{input::IsoTimeInput, options::length};
 use leptos::IntoView;
 
 use crate::Locale;
@@ -42,7 +42,7 @@ impl<T: IsoTimeInput> IntoIcuTime for T {
 }
 
 /// Marker trait for types that produce a `T: IsoTimeInput`.
-pub trait TimeFormatterInputFn: 'static + Clone {
+pub trait TimeFormatterInputFn: 'static + Clone + Send + Sync {
     /// The returned `T: IsoTimeInput`.
     type Time: IsoTimeInput;
 
@@ -50,7 +50,7 @@ pub trait TimeFormatterInputFn: 'static + Clone {
     fn to_icu_time(&self) -> Self::Time;
 }
 
-impl<T: IntoIcuTime, F: Fn() -> T + Clone + 'static> TimeFormatterInputFn for F {
+impl<T: IntoIcuTime, F: Fn() -> T + Clone + Send + Sync + 'static> TimeFormatterInputFn for F {
     type Time = T::Time;
 
     fn to_icu_time(&self) -> Self::Time {
@@ -63,7 +63,7 @@ pub fn format_time_to_view<L: Locale>(
     locale: L,
     time: impl TimeFormatterInputFn,
     length: length::Time,
-) -> impl IntoView {
+) -> impl IntoView + Clone {
     let time_formatter = super::get_time_formatter(locale, length);
 
     move || {

@@ -5,9 +5,9 @@ use std::{
     str::FromStr,
 };
 
-use icu::locid;
+use icu_locid::{LanguageIdentifier, Locale as IcuLocale};
 
-use crate::{I18nContext, Locale, LocaleKeys};
+use crate::{Direction, I18nContext, Locale, LocaleKeys};
 
 /// Represent a scope in a locale.
 pub trait Scope<L: Locale>: 'static + Send + Sync {
@@ -50,7 +50,7 @@ impl<L: Locale, S: Scope<L>> ConstScope<L, S> {
     }
 
     #[doc(hidden)]
-    pub const fn map<NS: Scope<L>>(self, map_fn: fn(&S) -> &NS) -> ConstScope<L, NS> {
+    pub const fn map<NS: Scope<L>>(self, map_fn: fn(S) -> NS) -> ConstScope<L, NS> {
         let _ = map_fn;
         ConstScope(PhantomData)
     }
@@ -107,14 +107,14 @@ impl<L: Locale, S: Scope<L>> fmt::Display for ScopedLocale<L, S> {
     }
 }
 
-impl<L: Locale, S: Scope<L>> AsRef<locid::LanguageIdentifier> for ScopedLocale<L, S> {
-    fn as_ref(&self) -> &locid::LanguageIdentifier {
+impl<L: Locale, S: Scope<L>> AsRef<LanguageIdentifier> for ScopedLocale<L, S> {
+    fn as_ref(&self) -> &LanguageIdentifier {
         self.locale.as_ref()
     }
 }
 
-impl<L: Locale, S: Scope<L>> AsRef<locid::Locale> for ScopedLocale<L, S> {
-    fn as_ref(&self) -> &locid::Locale {
+impl<L: Locale, S: Scope<L>> AsRef<IcuLocale> for ScopedLocale<L, S> {
+    fn as_ref(&self) -> &IcuLocale {
         self.locale.as_ref()
     }
 }
@@ -154,12 +154,19 @@ impl<L: Locale, S: Scope<L>> FromStr for ScopedLocale<L, S> {
 
 impl<L: Locale, S: Scope<L>> Locale<L> for ScopedLocale<L, S> {
     type Keys = S::Keys;
+    type TranslationUnitId = L::TranslationUnitId;
+    #[cfg(all(feature = "dynamic_load", not(feature = "csr")))]
+    type ServerFn = L::ServerFn;
 
     fn as_str(self) -> &'static str {
         <L as Locale>::as_str(self.locale)
     }
 
-    fn as_icu_locale(self) -> &'static locid::Locale {
+    fn direction(self) -> Direction {
+        <L as Locale>::direction(self.locale)
+    }
+
+    fn as_icu_locale(self) -> &'static IcuLocale {
         <L as Locale>::as_icu_locale(self.locale)
     }
 
@@ -176,6 +183,24 @@ impl<L: Locale, S: Scope<L>> Locale<L> for ScopedLocale<L, S> {
             locale,
             scope_marker: PhantomData,
         }
+    }
+
+    #[cfg(feature = "dynamic_load")]
+    fn request_translations(
+        self,
+        translations_id: Self::TranslationUnitId,
+    ) -> impl std::future::Future<
+        Output = Result<
+            crate::fetch_translations::LocaleServerFnOutput,
+            leptos::prelude::ServerFnError,
+        >,
+    > {
+        L::request_translations(self.locale, translations_id)
+    }
+
+    #[cfg(all(feature = "dynamic_load", feature = "hydrate"))]
+    fn init_translations(self, translations_id: Self::TranslationUnitId, values: Vec<Box<str>>) {
+        L::init_translations(self.locale, translations_id, values);
     }
 }
 
